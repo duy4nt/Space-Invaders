@@ -14,10 +14,21 @@ const SPRITE_HEIGHT: f32 = 30.0;
 struct GameRng(StdRng);
 
 #[derive(Resource)]
+struct GameDifficulty {
+    level: u8,
+    speed_multiplier: f32,
+}
+
+#[derive(Resource)]
 struct SpawnTimer {
     timer: Timer,
     current_interval: f32,
-    decrease_Rate: f32,
+    decrease_rate: f32,
+}
+
+#[derive(Component)]
+struct MoveToPlayer {
+    base_speed: f32,
 }
 
 #[derive(Component)]
@@ -37,8 +48,12 @@ fn main() {
             ..Default::default()
         }))
         .insert_resource(Time::<Fixed>::from_hz(60.0))
+        .insert_resource(GameDifficulty {
+            level: 1,
+            speed_multiplier: 1.0,
+        })
         .add_systems(Startup, setup)
-        .add_systems(FixedUpdate, (player_movement_system, rotate_to_player_system),)
+        .add_systems(FixedUpdate, (player_movement_system, rotate_to_player_system, movement_to_player_system,),)
         .run();
 }
 
@@ -53,8 +68,10 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
 
     let mut score: u16 = 0;
 
+    //camera
     commands.spawn(Camera2d);
 
+    //score
     commands.spawn((
         Text::new(format!("Score: {}", score)),
         Node {
@@ -68,6 +85,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     let horizontal_margin = BOUNDS.x / 4.0;
     let vertical_margin = BOUNDS.y / 4.0;
 
+    //hero_sprite
     commands.spawn((Sprite::from_image(
         asset_server.load("player.png")),
         Transform::from_xyz(0.0,-( WINDOW_HEIGHT/2.0) + SPRITE_HEIGHT, 1.0),
@@ -77,11 +95,15 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
         },
     ));
 
+    //enemy_sprite
     commands.spawn((Sprite::from_image(
         asset_server.load("yellow.png")),
         Transform::from_xyz(0.0, 0.0, 0.0),
         RotateToPlayer{
             rotation_speed: f32::to_radians(45.0),
+        },
+        MoveToPlayer {
+            base_speed: 50.0,
         },
     ));
 }
@@ -119,6 +141,24 @@ fn player_movement_system(
     transform.translation = transform.translation.min(extents).max(-extents);
 }
 
+fn movement_to_player_system(
+    time: Res<Time>,
+    difficulty: Res<GameDifficulty> , 
+    mut enemy_sprite_query: Query<(&MoveToPlayer, &mut Transform), 
+    Without<Player>>, 
+    player_query: Single<&Transform, With<Player>>) {
+    let player_translation = player_query.translation;
+    for (move_config, mut enemy_transform) in &mut enemy_sprite_query {
+        let direction_to_player = (player_translation - enemy_transform.translation).normalize();
+        let current_speed = move_config.base_speed * difficulty.speed_multiplier;
+        let movement_delta = direction_to_player * current_speed * time.delta_secs();
+        enemy_transform.translation += movement_delta;
+
+        let extents= Vec3::from((BOUNDS / 2.0, 0.0));
+        enemy_transform.translation = enemy_transform.translation.min(extents).max(-extents);
+    }
+}
+
 fn rotate_to_player_system(
     time: Res<Time>,
     mut query: Query<(&RotateToPlayer, &mut Transform), Without<Player>>,
@@ -139,7 +179,7 @@ fn rotate_to_player_system(
         let right_dot_player = enemy_right.dot(to_player);
         let rotation_sign = -f32::copysign(1.0, right_dot_player);
 
-        let max_angle = ops::acos(forward_dot_player.clamp(-1.0, 1.0));
+        let max_angle = f32::acos(forward_dot_player.clamp(-1.0, 1.0));
         let rotation_angle = rotation_sign * (config.rotation_speed * time.delta_secs()).min(max_angle);
 
         enemy_transform.rotate_z(rotation_angle);
